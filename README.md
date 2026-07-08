@@ -7,6 +7,15 @@ Recipe by [Aiden (aidendle94)](https://github.com/aidendle94) — upstream image
 
 ---
 
+## Prerequisites
+This guide assumes you have DeepSeek-v4-Flash-DSpark check point on both nodes.
+If you don't - hf download deepseek-ai/DeepSeek-V4-Flash-DSpark on master and the scp over ROCE network to the worker.
+
+Same for the vllm image from Aiden - docker pull aidendle94/sparkrun-vllm-ds4-gb10:production-3.7
+and then export the image to tar (no compression), scp to worker, import to docker.
+
+Clone this repo on master and worker into the directory with same path on both.
+
 ## Quick Start
 
 ```bash
@@ -161,6 +170,7 @@ tool-eval-bench --hardmode --seed 42 --parallel 4 --trials 3 --max-turns 30 --ti
 
 
 
+If your setup allows to serve at least 1 max length seq (1M) then we advise *NOT TO REDUCE* the max length per seq and keep it at maximum. Reducing will lead to overall reduction of KV cache, as DeepSeek v4 uses static YaRN configured in model's manifest and changing model length screwing with scaling factors and VLLM loses its marbles over it.
 
 ### Cache directories
 
