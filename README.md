@@ -40,7 +40,7 @@ docker compose --env-file .env -f compose.head.yaml up -d
 | `compose.worker.yaml` | WORKER node (rank 1) service definition | No — vars come from `.env` |
 | `start.sh` | Wrapper: sync + launch both nodes in order | No (uses `.env` vars) |
 | `stop.sh` | Stops containers on both nodes | No (uses `.env` vars) |
-| `92-hardmode/` | Upstream reference variant | — |
+
 
 ---
 
