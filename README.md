@@ -100,7 +100,7 @@ This test utilized temperature 1.0 but limits probabilitic pool by top 25%. Top_
 tool-eval-bench --hardmode --seed 42 --parallel 4 --trials 3 --max-turns 30 --timeout 600 \
 --backend-kwargs '{"chat_template_kwargs": {"thinking": true, "reasoning_effort": "high","temperature": 1,"top_p":0.25}}'
 ```
-
+```
 ╭──────────────────────────────────────────────────────────────────────────────── 🏆 Benchmark Complete ─────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                                                                                                        │
 │    Model:  deepseek-ai/DeepSeek-V4-Flash-DSpark                                                                                                                                        │
@@ -134,7 +134,8 @@ tool-eval-bench --hardmode --seed 42 --parallel 4 --trials 3 --max-turns 30 --ti
 │    • Responsiveness: logistic curve (100 at <1s, ~50 at 3s, 0 at >10s)                                                                                                                 │
 │                                                                                                                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
+```
+```
 ╭───────────────────────────────────────────────────────────────────────────────── 📊 Trial Statistics ──────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                                                                                                        │
 │    Trials:  3                                                                                                                                                                          │
@@ -167,7 +168,7 @@ tool-eval-bench --hardmode --seed 42 --parallel 4 --trials 3 --max-turns 30 --ti
 │      TC-69: 1.7 ± 0.6  (2,2,1)                                                                                                                                                         │
 │                                                                                                                                                                                        │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
+```
 
 
 If your setup allows to serve at least 1 max length seq (1M) then we advise *NOT TO REDUCE* the max length per seq and keep it at maximum. Reducing will lead to overall reduction of KV cache, as DeepSeek v4 uses static YaRN configured in model's manifest and changing model length screwing with scaling factors and VLLM loses its marbles over it.
