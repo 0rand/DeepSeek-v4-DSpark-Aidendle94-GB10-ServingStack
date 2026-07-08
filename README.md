@@ -80,6 +80,8 @@ The setup presented deliberately set B12x_MOE head to 0 - use CUTLASS. It has ve
 Current setup uses 4 MTP tokens versus 5 commonly uses and smaller BATCH of 8k. This has very minor effect on performance but allows to maximize KV Cache while keeping 
 all predictive tokens above 50-60% (average 70-75% for 4 token batch)
 
+If your setup allows to serve at least 1 max length seq (1M) then we advise *NOT TO REDUCE* the max length per seq and keep it at maximum. Reducing will lead to overall reduction of KV cache, as DeepSeek v4 uses static YaRN configured in model's manifest and changing model length screwing with scaling factors and VLLM loses its marbles over it.
+
 ### Cache directories
 
 | Variable | Default | Notes |
