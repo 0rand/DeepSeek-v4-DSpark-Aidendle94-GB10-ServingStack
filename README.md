@@ -7,6 +7,15 @@ Recipe by [Aiden (aidendle94)](https://github.com/aidendle94) — upstream image
 
 ---
 
+## Prerequisites
+This guide assumes you have DeepSeek-v4-Flash-DSpark check point on both nodes.
+If you don't - hf download deepseek-ai/DeepSeek-V4-Flash-DSpark on master and the scp over ROCE network to the worker.
+
+Same for the vllm image from Aiden - docker pull aidendle94/sparkrun-vllm-ds4-gb10:production-3.7
+and then export the image to tar (no compression), scp to worker, import to docker.
+
+Clone this repo on master and worker into the directory with same path on both.
+
 ## Quick Start
 
 ```bash
