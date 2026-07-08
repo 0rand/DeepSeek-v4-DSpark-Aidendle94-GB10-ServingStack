@@ -61,6 +61,16 @@ Everything you need to change lives in **one file: `.env`** (copy from `.env.exa
 | `WORKER_SSH_TARGET` | SSH target for the worker (`user@hostname-or-ip`). Used by `start.sh` to sync configs. |
 | `WORKER_DIR` | Absolute path to this repo on the worker. |
 
+*CAUTION*
+The current setup targeting maximized kv cache and close to RAM limit at 0.84. Depending on your workload and configuration (for example if you run X11 or memory consuming apps) you may
+want to limit this number to 0.80. If you don't run GUI and any other apps on your Sparks - you may try to go higher to 0.86. Current configuration in example allows for 
+2M+ tokens KV cache.
+
+The setup presented deliberately set B12x_MOE head to 0 - use CUTLASS. It has very minor influence on performance but anecdotally slightly helps to increase quality.
+
+Current setup uses 4 MTP tokens versus 5 commonly uses and smaller BATCH of 8k. This has very minor effect on performance but allows to maximize KV Cache while keeping 
+all predictive tokens above 50-60% (average 70-75% for 4 token batch)
+
 ### Cache directories
 
 | Variable | Default | Notes |

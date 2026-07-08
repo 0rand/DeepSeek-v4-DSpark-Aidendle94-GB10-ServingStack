@@ -130,4 +130,4 @@ services:
           --disable-custom-all-reduce \
           --nnodes 2 --node-rank "$${NODE_RANK}" --master-addr "$${MASTER_ADDR}" --master-port 25000 \
           $${HEADLESS:+--headless} \
-          --speculative-config "{\\"method\\":\\"dspark\\",\\"num_speculative_tokens\\":$${SPEC_TOKENS},\\"draft_sample_method\\":\\"probabilistic\\"}"
+          --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":$${SPEC_TOKENS},\"draft_sample_method\":\"probabilistic\"}"
