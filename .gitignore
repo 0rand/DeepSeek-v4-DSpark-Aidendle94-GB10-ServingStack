@@ -1,0 +1,4 @@
+# Environment — user creates this from .env.example
+.env
+# Temporary compose merge (if any)
+.env.combined

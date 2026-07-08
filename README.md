@@ -1,70 +1,148 @@
-# DS4F-DSpark-Aiden — production-3.5
+# DS4F-DSpark-Aiden
 
-DeepSeek-V4-Flash-DSpark on 2x DGX Spark (TP=2 over RoCE).
-Recipe by Aiden (aidendle94) — adapted for the Canglong cluster.
+**DeepSeek-V4-Flash-DSpark** on **2× DGX Spark** (TP=2 over RoCE).
+
+Recipe by [Aiden (aidendle94)](https://github.com/aidendle94) — upstream image
+`aidendle94/sparkrun-vllm-ds4-gb10:production-3.7`.
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone the repo on BOTH nodes
+git clone <this-repo> ~/dockers/DS4F-DFlash-Aiden-3.7
+
+# 2. Configure (one file — edit everything here)
+cp .env.example .env
+# Edit .env with your IPs, NICs, cache paths, and tuning.
+
+# 3. Launch — worker FIRST, head SECOND
+# On the worker node:
+docker compose --env-file .env -f compose.worker.yaml up -d
+
+# Wait ~15 seconds, then on the head node:
+docker compose --env-file .env -f compose.head.yaml up -d
+
+# Or use the wrapper (syncs configs to worker via SSH, handles ordering):
+./start.sh
+```
+
+---
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `compose.yaml` | Docker Compose service definition (parameterized) |
-| `env.cave` | HEAD node env — DragonCave (rank 0) |
-| `env.force` | WORKER node env — DragonForce (rank 1) |
-| `start.sh` | `./start.sh [cave\|force]` — wrapper for docker compose up |
-| `stop.sh` | `./stop.sh` — docker compose down |
+| File | Purpose | Editable? |
+|------|---------|-----------|
+| `.env.example` | Template — copy to `.env` and edit | — |
+| `.env` | **Your cluster config** (gitignored) | **Yes — edit this** |
+| `compose.head.yaml` | HEAD node (rank 0) service definition | No — vars come from `.env` |
+| `compose.worker.yaml` | WORKER node (rank 1) service definition | No — vars come from `.env` |
+| `start.sh` | Wrapper: sync + launch both nodes in order | No (uses `.env` vars) |
+| `stop.sh` | Stops containers on both nodes | No (uses `.env` vars) |
+| `92-hardmode/` | Upstream reference variant | — |
 
-## Performance Expectations
+---
 
-- **Single-stream (code)**: ~55–65 tok/s (spec=3), ~65 tok/s (spec=5)
-- **Single-stream (prose)**: ~44 tok/s (spec=3), ~48 tok/s (spec=5)
-- **Aggregate @ 8 concurrent**: ~145 tok/s
-- **Max concurrent**: 128 streams
-- **Context window**: 393,216 tokens
-- **First boot**: ~15–20 min (kernel compilation + CUDA graph capture)
-- **Warm restart**: ~6–7 min (with caches)
+## Configuration
 
-## Key Changes from production-v2 (previous Aiden setup)
+Everything you need to change lives in **one file: `.env`** (copy from `.env.example`).
 
-| What | Old (production-v2) | New (production-3.5) |
-|------|---------------------|----------------------|
-| **Image** | `aidendle94/sparkrun-vllm-ds4-gb10:production-v2` | `aidendle94/sparkrun-vllm-ds4-gb10:production-3.5` |
-| **Model** | Base `DeepSeek-V4-Flash` (specific revision) | `DeepSeek-V4-Flash-DSpark` (draft module baked in) |
-| **Spec decode** | MTP, 2 tokens | **DSpark**, 3 tokens (5 for code-heavy) |
-| **Context** | 1,048,576 | **393,216** |
-| **Max seqs** | 4 | **128** |
-| **Batched tokens** | 2048 | **4096** |
-| **GID index** | Hardcoded 2 | **Auto-detected** (RoCE v2 + IPv4) |
-| **Kernel compile** | No AOT | **VLLM_USE_AOT_COMPILE=1** |
-| **Model runner** | V1 | **V2** |
-| **New flags** | — | `VLLM_DSPARK_REPLICATE_MARKOV_W1`, `FLASHINFER_SAMPLER`, `BREAKABLE_CUDAGRAPH` |
-| **Cache layout** | Single HF mount | **3 dedicated caches** (HF + vLLM + TileLang) |
-| **Served name** | `deepseek-v4-flash` | **`deepseek-v4-flash`** (unchanged) |
-| **Port** | 8100 | **8100** (unchanged — proxy at :8000 untouched) |
-| **shm_size** | 64gb | **32g** |
+### Essential — must change
+
+| Variable | What it is |
+|----------|------------|
+| `NCCL_IB_HCA` | RoCE HCA names, comma-separated. Find with `ibstat \| grep -E 'CA\|hca_id'` |
+| `NCCL_SOCKET_IFNAME` | RoCE netdevs for socket fallback. `ip -br addr` on your RoCE subnet. |
+| `CONTROL_IF` | Control-plane netdev (usually one of the above). |
+| `MASTER_ADDR` | Head node's RoCE IP address. **Same value on both nodes.** |
+| `HEAD_ROCE_IP` | Head node's own RoCE IP (usually same as `MASTER_ADDR`). |
+| `WORKER_ROCE_IP` | Worker node's own RoCE IP. |
+| `WORKER_SSH_TARGET` | SSH target for the worker (`user@hostname-or-ip`). Used by `start.sh` to sync configs. |
+| `WORKER_DIR` | Absolute path to this repo on the worker. |
+
+### Cache directories
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `HF_CACHE` | `/home/user/.cache/huggingface` | Model weights (~148 GB) — must exist before first boot |
+| `VLLM_CACHE` | `/home/user/.cache/vllm-ds4-dspark` | Compiled attention/vLLM kernels |
+| `TILELANG_CACHE` | `/home/user/.cache/tilelang-ds4` | DSpark speculative-decode kernels |
+
+Delete the cache dirs to force a full recompile on next boot (~25 min). Keep them for warm restarts (~6–7 min).
+
+### Model
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `MODEL_PATH` | `deepseek-ai/DeepSeek-V4-Flash-DSpark` | HuggingFace repo |
+| `MODEL_REVISION` | `913f0657...` | Pinned commit — prevents cache invalidation on README-only updates |
+| `SERVED_MODEL_NAME` | `deepseek-v4-flash` | Name your clients use in `"model"` field — keep stable across config changes |
+
+### Image
+
+| Variable | Default |
+|----------|---------|
+| `IMAGE` | `aidendle94/sparkrun-vllm-ds4-gb10:production-3.7` |
+
+### Tuning — validated production profile
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8100` | API port |
+| `TP_SIZE` | `2` | Tensor parallelism (across 2 nodes) |
+| `SPEC_TOKENS` | `4` | DSpark speculative tokens. 3=balanced, 5=code-heavy |
+| `TEMPERATURE` | `0.95` | Default generation temperature |
+| `TOP_P` | `0.44` | Default top-p sampling |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | vLLM GPU memory fraction |
+| `MAX_MODEL_LEN` | `1048576` | Context window in tokens (must be multiple of block-size 256) |
+| `MAX_NUM_SEQS` | `16` | Max concurrent request slots |
+| `MAX_NUM_BATCHED_TOKENS` | `8192` | Tokens per scheduling batch |
+| `GRAPH_CAP` | `256` | CUDA graph capture size |
+| `ASYNC_SCHED` | `1` | Async scheduling (1=on, 0=off) |
+
+**Toggle B12X MoE ↔ Cutlass**: In the compose file, set `VLLM_USE_B12X_MOE: "1"` for B12X MoE (lower prefill latency), or `"0"` for Cutlass MoE (faster decode). Current default: `0` (Cutlass).
+
+---
 
 ## Boot Sequence
 
-Order matters. Worker must be listening before the head opens the cross-machine connection.
+**Order matters.** The worker must be listening before the head opens the cross-machine NCCL connection.
 
 ```bash
-# 1. WORKER — DragonForce (rank 1) — start FIRST
-ssh dragonforce
-cd ~/dockers/DS4F-DSpark-Aiden
-./start.sh force
+# 1. WORKER (rank 1) — start FIRST
+ssh worker-machine
+cd ~/dockers/DS4F-DFlash-Aiden-3.7
+docker compose --env-file .env -f compose.worker.yaml up -d
 
 # 2. Wait ~15 seconds
 
-# 3. HEAD — DragonCave (rank 0)
-./start.sh cave
+# 3. HEAD (rank 0) — start SECOND (on head machine)
+docker compose --env-file .env -f compose.head.yaml up -d
 
 # 4. Watch the head logs
 docker logs -f ds4-dspark
 ```
 
+Or use the wrapper from the head node:
+```bash
+./start.sh    # syncs configs to worker, starts worker, waits, starts head
+```
+
+### Expected boot times
+
+| Scenario | Time |
+|----------|------|
+| First boot (no caches) | ~15–20 min (kernel compilation + CUDA graph capture) |
+| Warm restart (caches exist) | ~6–7 min |
+| Cold with TileLang cache only | ~25 min (kernel recompile) |
+
+---
+
 ## Verification
 
 ```bash
-# Health check (from Cave)
+# Health check (from head node)
 curl -s -o /dev/null -w '%{http_code}' http://localhost:8100/health
 # Should return 200
 
@@ -77,37 +155,37 @@ curl -s http://localhost:8100/v1/chat/completions \
   -d '{"model": "deepseek-v4-flash", "messages": [{"role":"user","content":"Capital of Estonia, one word?"}], "max_tokens": 16, "temperature": 0}'
 ```
 
-## Tuning Knobs (set in .env)
+---
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SPEC_TOKENS` | 3 | Speculative tokens. 3=balanced, 5=code-heavy |
-| `PORT` | 8100 | API port |
-| `GPU_MEMORY_UTILIZATION` | 0.8 | Leave at 0.8 for Spark |
-| `MAX_NUM_SEQS` | 128 | Max concurrent requests |
-| `GRAPH_CAP` | 128 | Must equal MAX_NUM_SEQS |
-| `ASYNC_SCHED` | 1 | Async scheduling (1=on, 0=off) |
+## Performance Expectations
 
-**Toggle B12X MoE ↔ Cutlass**: Set `VLLM_USE_B12X_MOE=0` in the environment block of compose.yaml for faster prefill (slower decode).
+| Metric | Value |
+|--------|-------|
+| Single-stream (code) | ~55–65 tok/s (spec=3), ~65 tok/s (spec=5) |
+| Single-stream (prose) | ~44 tok/s (spec=3), ~48 tok/s (spec=5) |
+| Aggregate @ 8 concurrent | ~145 tok/s |
+| Max concurrent streams | Configured via `MAX_NUM_SEQS` |
+| Context window | Configured via `MAX_MODEL_LEN` |
 
-## Cache Directories
+---
 
-| Mount | Host Path | Contents |
-|-------|-----------|----------|
-| `/root/.cache/huggingface` | `~/.cache/huggingface` | Model weights (~148 GB) |
-| `/cache` | `~/.cache/vllm-ds4-dspark` | Compiled vLLM/attention kernels |
-| `/root/.tilelang` | `~/.cache/tilelang-ds4` | DSpark speculative-decode kernels |
+## Stopping
 
-Keep all three. Deleting TileLang cache triggers ~25 s kernel recompile on every restart.
+```bash
+# From the head node — kills both nodes
+./stop.sh
 
-## Cluster Network
+# Or manually:
+# Worker: ssh worker-machine 'docker rm -f ds4-dspark'
+# Head:   docker rm -f ds4-dspark
+```
 
-| Machine | LAN | RoCE | Role |
-|---------|-----|------|------|
-| DragonCave | 192.168.1.8 | 192.168.0.8 | HEAD (rank 0) |
-| DragonForce | 192.168.1.88 | 192.168.0.88 | WORKER (rank 1) |
+---
 
-- **RoCE HCAs**: `rocep1s0f0,roceP2p1s0f0`
-- **RoCE netdevs**: `enp1s0f0np0,enP2p1s0f0np0`
-- **Control interface**: `enP7s7` (LAN)
-- **GID index**: Auto-detected (RoCE v2 + IPv4) — no more hardcoded `2`
+## Caveats
+
+- **Requires 2× DGX Spark (GB10)** with identical CX7 NIC layout. Single-node operation is not supported out of the box.
+- **RoCE networking is required** — the NCCL configuration assumes dual-rail CX7 InfiniBand over Converged Ethernet.
+- **First boot downloads ~148 GB** of model weights from HuggingFace. Ensure `HF_HUB_OFFLINE=0` (or comment it out) for the initial download, then set it to `1`.
+- **The HF cache bug**: If `MODEL_REVISION` points to a commit that only changed README.md, the HF Hub may fail with `revision=None` + `HF_HUB_OFFLINE=1`. Pin to a content-changing revision. The current default is known-good.
+- **Container name `ds4-dspark`** is used on both nodes (different hosts, no conflict).

@@ -1,12 +1,12 @@
 # DeepSeek-V4-Flash-DSpark on 2x DGX Spark (TP=2 over RoCE)
-# Image: aidendle94/sparkrun-vllm-ds4-gb10:production-3.5
-# Recipe: Aiden (aidendle94) — adapted for the Canglong cluster
+# WORKER node (rank 1) — start FIRST, before the head.
 #
-# Per-node launch (use the companion env.cave / env.force):
-#   WORKER (rank 1, Force): docker compose --env-file env.force up -d   # start FIRST
-#   HEAD   (rank 0, Cave):  docker compose --env-file env.cave  up -d   # then this
+# Image: aidendle94/sparkrun-vllm-ds4-gb10:production-3.7
+# Recipe: Aiden (aidendle94)
 #
-# Or use the start.sh wrapper.
+# Usage:
+#   docker compose --env-file .env -f compose.worker.yaml up -d
+#   # or: ./start.sh worker
 
 services:
   ds4:
@@ -38,13 +38,13 @@ services:
       CUDA_VISIBLE_DEVICES: "0"
       CUDA_DEVICE_ORDER: PCI_BUS_ID
       CUTE_DSL_ARCH: sm_121a
-      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.84}
+      GPU_MEMORY_UTILIZATION: ${GPU_MEMORY_UTILIZATION:-0.85}
       # ---- RoCE networking (site-specific — match YOUR NICs) ----
       NCCL_NET: IB
       NCCL_IB_DISABLE: "0"
-      NCCL_IB_HCA: ${NCCL_IB_HCA:?your RoCE HCAs, e.g. rocep1s0f1,roceP2p1s0f1}
-      NCCL_SOCKET_IFNAME: ${NCCL_SOCKET_IFNAME:?your RoCE netdevs, e.g. enp1s0f1np1,enP2p1s0f1np1}
-      GLOO_SOCKET_IFNAME: ${CONTROL_IF:?control netdev, e.g. enp1s0f1np1}
+      NCCL_IB_HCA: ${NCCL_IB_HCA:?your RoCE HCAs, e.g. rocepXsXfX,rocePXpXfX}
+      NCCL_SOCKET_IFNAME: ${NCCL_SOCKET_IFNAME:?your RoCE netdevs, e.g. enpXsXfXnpX}
+      GLOO_SOCKET_IFNAME: ${CONTROL_IF:?control netdev, e.g. enpXsXfXnpX}
       TP_SOCKET_IFNAME: ${CONTROL_IF}
       MN_IF_NAME: ${CONTROL_IF}
       OMPI_MCA_btl_tcp_if_include: ${CONTROL_IF}
@@ -55,7 +55,7 @@ services:
       NCCL_IGNORE_CPU_AFFINITY: "1"
       NCCL_DEBUG: WARN
       NCCL_NVLS_ENABLE: "0"
-      VLLM_HOST_IP: "${VLLM_HOST_IP:-}"
+      VLLM_HOST_IP: "${WORKER_ROCE_IP:?set WORKER_ROCE_IP in .env}"
       # ---- runtime ----
       HF_HUB_OFFLINE: "1"
       PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
@@ -65,22 +65,28 @@ services:
       VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_USE_FLASHINFER_SAMPLER: "1"
-      VLLM_USE_B12X_MOE: "1"
+      #VLLM_USE_B12X_MOE: "1"
+      VLLM_USE_B12X_MOE: "0"
       VLLM_DSPARK_REPLICATE_MARKOV_W1: "1"
       ASYNC_SCHED: ${ASYNC_SCHED:-1}
       # ---- model / serve ----
       MODEL_PATH: ${MODEL_PATH:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
+      SERVED_MODEL_NAME: ${SERVED_MODEL_NAME:-deepseek-v4-flash}
       PORT: ${PORT:-8100}
-      GPU_MEM: ${GPU_MEMORY_UTILIZATION:-0.84}
-      SPEC_TOKENS: ${SPEC_TOKENS:-3}
+      GPU_MEM: ${GPU_MEMORY_UTILIZATION:-0.85}
+      SPEC_TOKENS: ${SPEC_TOKENS:-4}
+      TEMPERATURE: ${TEMPERATURE:-0.95}
+      TOP_P: ${TOP_P:-0.44}
       TP_SIZE: ${TP_SIZE:-2}
-      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-8}
-      MAX_NUM_BATCHED_TOKENS: ${MAX_NUM_BATCHED_TOKENS:-12144}
-      GRAPH_CAP: ${GRAPH_CAP:-32}
-      # ---- per-node (from .env) ----
-      NODE_RANK: "${NODE_RANK:?0 on head, 1 on worker}"
-      HEADLESS: "${HEADLESS:-}"
-      MASTER_ADDR: "${MASTER_ADDR:?head-node RoCE IP, e.g. 192.168.0.8}"
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-524288}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-16}
+      MAX_NUM_BATCHED_TOKENS: ${MAX_NUM_BATCHED_TOKENS:-8192}
+      GRAPH_CAP: ${GRAPH_CAP:-256}
+      # ---- per-node (WORKER / rank 1) ----
+      NODE_RANK: "1"
+      HEADLESS: "1"
+      MASTER_ADDR: "${MASTER_ADDR:?set MASTER_ADDR in .env}"
+      MODEL_REVISION: "${MODEL_REVISION:-main}"
     command:
       - /bin/bash
       - -lc
@@ -103,12 +109,13 @@ services:
         if [ "$${ASYNC_SCHED:-1}" = "1" ]; then ASYNC_ARG="--async-scheduling"; else ASYNC_ARG=""; fi
 
         exec vllm serve "$${MODEL_PATH}" \
-          --served-model-name deepseek-v4-flash \
+          --revision "$${MODEL_REVISION:-main}" \
+          --served-model-name "$${SERVED_MODEL_NAME:-deepseek-v4-flash}" \
           --host 0.0.0.0 --port "$${PORT}" --trust-remote-code \
           --kv-cache-dtype fp8 --block-size 256 --load-format auto \
           --tensor-parallel-size "$${TP_SIZE}" \
           --gpu-memory-utilization "$${GPU_MEM}" \
-          --max-model-len 1048576 --max-num-seqs "$${MAX_NUM_SEQS}" \
+          --max-model-len "$${MAX_MODEL_LEN}" --max-num-seqs "$${MAX_NUM_SEQS}" \
           --max-num-batched-tokens "$${MAX_NUM_BATCHED_TOKENS}" \
           --max-cudagraph-capture-size "$${GRAPH_CAP}" \
           --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}' \
@@ -116,9 +123,11 @@ services:
           --enable-chunked-prefill --enable-prefix-caching --enable-flashinfer-autotune \
           --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 \
           --enable-auto-tool-choice \
+          --default-chat-template-kwargs.temperature=$${TEMPERATURE} \
+          --default-chat-template-kwargs.top_p=$${TOP_P} \
           --default-chat-template-kwargs.thinking=true --default-chat-template-kwargs.reasoning_effort=high \
           --attention-backend FLASHINFER_MLA_SPARSE_DSV4 --moe-backend b12x \
           --disable-custom-all-reduce \
           --nnodes 2 --node-rank "$${NODE_RANK}" --master-addr "$${MASTER_ADDR}" --master-port 25000 \
           $${HEADLESS:+--headless} \
-          --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":$${SPEC_TOKENS},\"draft_sample_method\":\"probabilistic\"}"
+          --speculative-config "{\\\"method\\\":\\\"dspark\\\",\\\"num_speculative_tokens\\\":$${SPEC_TOKENS},\\\"draft_sample_method\\\":\\\"probabilistic\\\"}"
