@@ -37,8 +37,8 @@ the same RoCE subnet.
   over the RoCE fabric:
   `hf download deepseek-ai/DeepSeek-V4-Flash-0731`
 - Pull the image on both nodes:
-  `docker pull aidendle94/sparkrun-vllm-ds4-gb10:production-3.75-reffix-0731`
-  (or build it yourself — see [Encoder patch](#encoder-patch-0731-reasoning-effort-fix))
+  `docker pull aidendle94/sparkrun-vllm-ds4-gb10:production-3.75`
+  (apply the encoder fix and compose a custom image (reffix-0731) — see [Encoder patch](#encoder-patch-0731-reasoning-effort-fix))
 - Clone this repo on **both** nodes into the **same absolute path**.
 
 ## Quick Start
