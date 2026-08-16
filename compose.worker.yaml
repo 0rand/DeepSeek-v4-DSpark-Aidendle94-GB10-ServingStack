@@ -1,3 +1,4 @@
+
 # DeepSeek-V4-Flash-DSpark on 2x DGX Spark (TP=2 over RoCE)
 # WORKER node (rank 1) — start FIRST, before the head.
 #
@@ -66,7 +67,6 @@ services:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_USE_FLASHINFER_SAMPLER: "1"
       #VLLM_USE_B12X_MOE: "1"
-      VLLM_USE_B12X_MOE: "0"
       VLLM_DSPARK_REPLICATE_MARKOV_W1: "1"
       ASYNC_SCHED: ${ASYNC_SCHED:-1}
       # ---- model / serve ----
@@ -75,12 +75,13 @@ services:
       PORT: ${PORT:-8100}
       GPU_MEM: ${GPU_MEMORY_UTILIZATION:-0.85}
       SPEC_TOKENS: ${SPEC_TOKENS:-4}
-      TEMPERATURE: ${TEMPERATURE:-0.95}
-      TOP_P: ${TOP_P:-0.44}
+      TEMPERATURE: ${TEMPERATURE:-1}
+      TOP_P: ${TOP_P:-1}
       TP_SIZE: ${TP_SIZE:-2}
-      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-524288}
-      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-16}
+      MAX_MODEL_LEN: ${MAX_MODEL_LEN:-1048576}
+      MAX_NUM_SEQS: ${MAX_NUM_SEQS:-32}
       MAX_NUM_BATCHED_TOKENS: ${MAX_NUM_BATCHED_TOKENS:-8192}
+      REPETITION_PENALTY: ${REPETITION_PENALTY:-1.05}
       GRAPH_CAP: ${GRAPH_CAP:-256}
       # ---- per-node (WORKER / rank 1) ----
       NODE_RANK: "1"
@@ -96,6 +97,8 @@ services:
         export VLLM_ENABLE_PCIE_ALLREDUCE=0 VLLM_PCIE_ALLREDUCE_BACKEND=cpp
 
         # Auto-detect the RoCE-v2 IPv4 GID index (it re-numbers across reboots).
+        # 
+
         for HCA in $(echo "$${NCCL_IB_HCA}" | tr ',' ' '); do
           for i in $(seq 0 15); do
             t=$(cat /sys/class/infiniband/$$HCA/ports/1/gid_attrs/types/$$i 2>/dev/null || true)
@@ -106,13 +109,13 @@ services:
 
         echo "[dspark] NODE_RANK=$${NODE_RANK} SPEC=dspark/$${SPEC_TOKENS} GID=$${NCCL_IB_GID_INDEX}"
 
-        if [ "$${ASYNC_SCHED:-1}" = "1" ]; then ASYNC_ARG="--async-scheduling"; else ASYNC_ARG=""; fi
+        if [ "$${ASYNC_SCHED:-1}" = "1" ]; then ASYNC_ARG="--async-scheduling"; else ASYNC_ARG="--no-async-scheduling"; fi
 
         exec vllm serve "$${MODEL_PATH}" \
-          --revision "$${MODEL_REVISION:-main}" \
-          --served-model-name "$${SERVED_MODEL_NAME:-deepseek-v4-flash}" \
+          --revision "$${MODEL_REVISION:?set MODEL_REVISION in .env}" \
+          --served-model-name "$${SERVED_MODEL_NAME:-deepseek-v4-flash}" ds4f-dspark \
           --host 0.0.0.0 --port "$${PORT}" --trust-remote-code \
-          --kv-cache-dtype fp8 --block-size 256 --load-format auto \
+          --kv-cache-dtype fp8 --enable-prefix-caching --block-size 256 --load-format auto \
           --tensor-parallel-size "$${TP_SIZE}" \
           --gpu-memory-utilization "$${GPU_MEM}" \
           --max-model-len "$${MAX_MODEL_LEN}" --max-num-seqs "$${MAX_NUM_SEQS}" \
@@ -120,14 +123,13 @@ services:
           --max-cudagraph-capture-size "$${GRAPH_CAP}" \
           --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}' \
           $${ASYNC_ARG} --no-scheduler-reserve-full-isl \
-          --enable-chunked-prefill --enable-prefix-caching --enable-flashinfer-autotune \
+          --enable-chunked-prefill  --enable-flashinfer-autotune \
           --tokenizer-mode deepseek_v4 --tool-call-parser deepseek_v4 --reasoning-parser deepseek_v4 \
           --enable-auto-tool-choice \
-          --default-chat-template-kwargs.temperature=$${TEMPERATURE} \
-          --default-chat-template-kwargs.top_p=$${TOP_P} \
-          --default-chat-template-kwargs.thinking=true --default-chat-template-kwargs.reasoning_effort=high \
-          --attention-backend FLASHINFER_MLA_SPARSE_DSV4 --moe-backend b12x \
-          --disable-custom-all-reduce \
+          --override-generation-config "{\"temperature\":$${TEMPERATURE},\"top_p\":$${TOP_P},\"repetition_penalty\":$${REPETITION_PENALTY}}" \
+          --default-chat-template-kwargs.enable_thinking=true --default-chat-template-kwargs.reasoning_effort=max \
+          --attention-backend FLASHINFER_MLA_SPARSE_DSV4  \
+          --disable-custom-all-reduce --moe-backend b12x \
           --nnodes 2 --node-rank "$${NODE_RANK}" --master-addr "$${MASTER_ADDR}" --master-port 25000 \
           $${HEADLESS:+--headless} \
-          --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":$${SPEC_TOKENS},\"draft_sample_method\":\"probabilistic\"}"
+          --speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":$${SPEC_TOKENS},\"draft_sample_method\":\"greedy\"}"
